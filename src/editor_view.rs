@@ -29,7 +29,7 @@ impl EditorView {
     }
 
     fn curr_line(&self) -> &String {
-        &self.text[self.cursor_pos.y]
+        &self.text[self.cursor_pos.y.clone()]
     }
 }
 
@@ -49,34 +49,38 @@ impl EditorView {
 
         match self.cursor_pos.x {
             0 => {
-                if self.text.len() == 1 {
+                if self.text.len() == 1 || self.cursor_pos.y == 0 {
                     return;
                 }
 
                 let line_copy = line.clone();
                 self.text.remove(self.cursor_pos.y);
-                self.move_cursor_up();
+
+                self.cursor_pos.y -= 1;
 
                 if !line_copy.is_empty() {
                     self.text[self.cursor_pos.y] += &line_copy;
                 }
+
+                self.cursor_pos.x = self.curr_line().len() - line_copy.len();
             }
             _ => {
                 self.text[self.cursor_pos.y].remove(self.cursor_pos.x - 1);
                 self.cursor_pos.x -= 1;
             }
         }
-        if self.cursor_pos.x == 0 {
-            return;
-        }
+
     }
 
     fn on_newline(&mut self) {
         let line = String::from(self.curr_line().clone());
         let (before_cursor, after_cursor) = line.split_at(self.cursor_pos.x);
 
-        self.text[self.cursor_pos.y] = String::from(before_cursor.to_owned());
-        // self.text.insert(self.cursor_pos.y + 1, after_cursor.into());
+        self.text[self.cursor_pos.y] = before_cursor.into();
+        self.text.insert(self.cursor_pos.y + 1, after_cursor.into());
+
+        self.cursor_pos.x = 0;
+        self.cursor_pos.y += 1;
     }
 
     fn move_cursor_up(&mut self) {
