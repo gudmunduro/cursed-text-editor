@@ -10,7 +10,7 @@ use crate::editor_view::EditorView;
 
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = vec![String::from(""), String::from("test.txt")];
     
     if args.len() < 2 {
         println!("Filename not specified");
