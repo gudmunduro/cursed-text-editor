@@ -94,7 +94,7 @@ impl EditorView {
             self.scroll_index -= 1;
         }
         if self.curr_line().len() < self.cursor_pos.x {
-            self.cursor_pos.x = self.curr_line().len() - 2;
+            self.cursor_pos.x = self.curr_line().len();
         }
     }
 
@@ -109,7 +109,7 @@ impl EditorView {
             self.scroll_index += 1;
         }
         if self.text[self.cursor_pos.y].len() < self.cursor_pos.x {
-            self.cursor_pos.x = self.curr_line().len() - 2;
+            self.cursor_pos.x = self.curr_line().len();
         }
     }
 
@@ -168,7 +168,7 @@ impl EditorView {
                 EventResult::Consumed(None)
             },
             Key::End => {
-                self.cursor_pos.x = self.curr_line().len() - 1;
+                self.cursor_pos.x = self.curr_line().len();
                 EventResult::Consumed(None)
             },
             _ => EventResult::Ignored,
@@ -189,10 +189,20 @@ impl EditorView {
             // Show cursor
             if self.scroll_index + i == self.cursor_pos.y {
                 printer.with_color(ColorStyle::highlight(), |printer| {
-                    printer.print(
-                        (self.cursor_pos.x, self.cursor_pos.y - self.scroll_index),
-                        &line[self.cursor_pos.x..self.cursor_pos.x + 1],
-                    );
+                    if self.cursor_pos.x == line.len() {
+                        printer.print(
+                            (self.cursor_pos.x, self.cursor_pos.y - self.scroll_index),
+                            " ",
+                        );
+                    }
+                    else {
+                        printer.print(
+                            (self.cursor_pos.x, self.cursor_pos.y - self.scroll_index),
+                            &line[self.cursor_pos.x..self.cursor_pos.x + 1],
+                        );
+                    }
+
+
                 });
             }
         }
