@@ -1,30 +1,48 @@
 use cursive::event::{Event, EventResult, Key};
 use cursive::theme::{BaseColor, Color, ColorStyle, Theme};
-use cursive::{Printer, Vec2, View};
+use cursive::{Printer, Vec2, View, Cursive};
 use std::cmp::{max, min};
+use std::fs;
+use std::process::exit;
+
+const TAB_SIZE: usize = 4;
 
 pub struct EditorView {
     scroll_index: usize,
     cursor_pos: Vec2,
+    file_path: String,
     text: Vec<String>,
     constraint: Vec2,
     invalidated_data_changed: bool,
     invalidated_resize: bool,
+    is_insert_mode_active: bool,
+    last_input: Option<char>,
+    bottom_message: Option<String>,
 }
 
 impl EditorView {
-    pub fn new(text: String) -> EditorView {
+    pub fn new(file_path: String, text: String) -> EditorView {
         let lines = text.split("\n")
-                        .map(|x| String::from(x.trim()))
+                        .map(|l| {
+                            let mut line = String::from(l);
+                            if line.ends_with("\n") {
+                                line.pop();
+                            }
+                            line
+                        })
                         .collect();
 
         EditorView {
             scroll_index: 0,
             cursor_pos: Vec2::new(0, 0),
+            file_path: file_path,
             text: lines,
             constraint: Vec2::new(0, 0),
             invalidated_data_changed: false,
             invalidated_resize: false,
+            is_insert_mode_active: false,
+            last_input: None,
+            bottom_message: None,
         }
     }
 
@@ -36,12 +54,55 @@ impl EditorView {
 // MARK: Input
 
 impl EditorView {
-    fn on_input(&mut self, c: char) -> EventResult {
+    fn on_input_insert_mode(&mut self, c: char) -> EventResult {
         self.text[self.cursor_pos.y].insert(self.cursor_pos.x, c);
         self.cursor_pos.x += 1;
 
         self.invalidated_data_changed = true;
         EventResult::Consumed(None)
+    }
+
+    fn on_input_normal_mode(&mut self, c: char) -> EventResult {
+        match c {
+            'i' => {
+                self.is_insert_mode_active = true;
+                EventResult::Consumed(None)
+            }
+            'd' if self.last_input == Some('d') && self.text.len() == 1 => {
+                self.text[0] = "".into();
+                self.last_input = None;
+                
+                EventResult::Consumed(None)
+            }
+            'd' if self.last_input == Some('d') => {
+                self.text.remove(self.cursor_pos.y);
+                self.last_input = None;
+
+                if self.text.len() <= self.cursor_pos.y {
+                    self.cursor_pos.y -= 1;
+                }
+                
+                EventResult::Consumed(None)
+            }
+            's' => {
+                if self.save() {
+                    self.bottom_message = Some("File saved".into());
+                } else {
+                    self.bottom_message = Some("Failed to save file".into());
+                }
+
+                EventResult::Consumed(None)
+            },
+            'x' => {
+                exit(0);
+
+                EventResult::Consumed(None)
+            },
+            _ => {
+                self.last_input = Some('d');
+                EventResult::Ignored
+            }
+        }
     }
 
     fn on_backspace(&mut self) {
@@ -131,7 +192,13 @@ impl EditorView {
         }
     }
 
-    fn on_key(&mut self, key: Key) -> EventResult {
+    fn on_key_normal_mode(&mut self, key: Key) -> EventResult {
+        match key {
+            _ => self.on_key_shared(key)
+        }
+    }
+
+    fn on_key_insert_mode(&mut self, key: Key) -> EventResult {
         match key {
             Key::Backspace => {
                 self.on_backspace();
@@ -143,6 +210,21 @@ impl EditorView {
                 self.invalidated_data_changed = true;
                 EventResult::Consumed(None)
             }
+            Key::Tab => {
+                self.text[self.cursor_pos.y].insert_str(self.cursor_pos.x, &" ".repeat(TAB_SIZE));
+                self.cursor_pos.x += TAB_SIZE;
+                EventResult::Consumed(None)
+            }
+            Key::Esc => {
+                self.is_insert_mode_active = false;
+                EventResult::Consumed(None)
+            }
+            _ => self.on_key_shared(key)
+        }
+    }
+
+    fn on_key_shared(&mut self, key: Key) -> EventResult {
+        match key {
             Key::Up => {
                 self.move_cursor_up();
                 self.invalidated_data_changed = true;
@@ -162,16 +244,30 @@ impl EditorView {
                 self.move_cursor_left();
                 self.invalidated_data_changed = true;
                 EventResult::Consumed(None)
-            },
+            }
             Key::Home => {
                 self.cursor_pos.x = 0;
                 EventResult::Consumed(None)
-            },
+            }
             Key::End => {
                 self.cursor_pos.x = self.curr_line().len();
                 EventResult::Consumed(None)
-            },
-            _ => EventResult::Ignored,
+            }
+            _ => EventResult::Ignored
+        }
+    }
+}
+
+// MARK: File management
+
+impl EditorView {
+    fn save(&self) -> bool {
+        let content = self.text.join("\n");
+        
+        if let Ok(_) = fs::write(&self.file_path, content) {
+            true
+        } else {
+            false
         }
     }
 }
@@ -210,8 +306,18 @@ impl EditorView {
 
     fn draw_bottom_bar(&self, printer: &Printer, pos: usize) {
         let line_count = self.text.len();
+        let insert_mode_text = if self.is_insert_mode_active {
+            ", INSERT MODE"
+        } else {
+            ""
+        };
+        let bottom_message = if let Some(msg) = &self.bottom_message {
+            String::from(", ") + msg
+        } else {
+            String::new()
+        };
 
-        printer.print((0, pos), &format!("Lines: {}", line_count)[..]);
+        printer.print((0, pos), &format!("Lines: {}{}{}", line_count, insert_mode_text, &bottom_message)[..]);
     }
 }
 
@@ -244,8 +350,20 @@ impl View for EditorView {
                 self.invalidated_resize = true;
                 EventResult::Consumed(None)
             },
-            Event::Char(c) => self.on_input(c),
-            Event::Key(k) => self.on_key(k),
+            Event::Char(c) => {
+                if self.is_insert_mode_active {
+                    self.on_input_insert_mode(c)
+                } else {
+                    self.on_input_normal_mode(c)
+                }
+            }
+            Event::Key(k) => {
+                if self.is_insert_mode_active {
+                    self.on_key_insert_mode(k)
+                } else {
+                    self.on_key_normal_mode(k)
+                }
+            }
             _ => EventResult::Ignored,
         }
     }
