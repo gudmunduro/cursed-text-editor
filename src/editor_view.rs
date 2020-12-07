@@ -1,6 +1,7 @@
 use cursive::event::{Event, EventResult, Key};
 use cursive::theme::{BaseColor, Color, ColorStyle, Theme};
 use cursive::{Printer, Vec2, View, Cursive};
+use unicode_segmentation::{UnicodeSegmentation, Graphemes};
 use std::cmp::{max, min};
 use std::fs;
 use std::process::exit;
@@ -18,11 +19,12 @@ pub struct EditorView {
     is_insert_mode_active: bool,
     last_input: Option<char>,
     bottom_message: Option<String>,
+    curr_line_graphemes: Vec<String>
 }
 
 impl EditorView {
     pub fn new(file_path: String, text: String) -> EditorView {
-        let lines = text.split("\n")
+        let mut lines: Vec<String> = text.split("\n")
                         .map(|l| {
                             let mut line = String::from(l);
                             if line.ends_with("\n") {
@@ -31,6 +33,16 @@ impl EditorView {
                             line
                         })
                         .collect();
+        
+        if lines.len() == 0 {
+            lines.push(String::new());
+        }
+
+        let first_line_graphemes = lines.first()
+                                        .unwrap()
+                                        .graphemes(true)
+                                        .map(|x| String::from(x))
+                                        .collect();
 
         EditorView {
             scroll_index: 0,
@@ -43,7 +55,46 @@ impl EditorView {
             is_insert_mode_active: false,
             last_input: None,
             bottom_message: None,
+            curr_line_graphemes: first_line_graphemes,
         }
+    }
+}
+
+// MARK: Misc functions
+
+impl EditorView {
+    fn save(&self) -> bool {
+        let content = self.text.join("\n");
+        
+        if let Ok(_) = fs::write(&self.file_path, content) {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_bottom_message(&mut self) {
+        self.bottom_message = Some(String::new());
+    }
+
+    fn real_line_char_index(&self, pos: usize) -> usize {
+        self.curr_line_graphemes.iter()
+                                .take(pos)
+                                .fold(0, |acc, x| acc + x.len())
+    }
+
+    fn line_char_size(&self, pos: usize) -> usize {
+        self.curr_line_graphemes[pos].len()
+    }
+
+    fn next_line_char_index(&self, pos: usize) -> usize {
+        return self.real_line_char_index(pos) + self.line_char_size(pos);
+    }
+
+    fn update_curr_line_graphemes(&mut self) {
+        self.curr_line_graphemes = self.curr_line().graphemes(true)
+                                                    .map(|x| String::from(x))
+                                                    .collect();
     }
 
     fn curr_line(&self) -> &String {
@@ -51,11 +102,17 @@ impl EditorView {
     }
 }
 
-// MARK: Input
+// MARK: Events
 
 impl EditorView {
     fn on_input_insert_mode(&mut self, c: char) -> EventResult {
-        self.text[self.cursor_pos.y].insert(self.cursor_pos.x, c);
+        let insert_index = if self.curr_line().len() != 0 {
+            self.real_line_char_index(self.cursor_pos.x)
+        } else {
+            0
+        };
+
+        self.text[self.cursor_pos.y].insert(insert_index, c);
         self.cursor_pos.x += 1;
 
         self.invalidated_data_changed = true;
@@ -93,11 +150,6 @@ impl EditorView {
 
                 EventResult::Consumed(None)
             },
-            'x' => {
-                exit(0);
-
-                EventResult::Consumed(None)
-            },
             _ => {
                 self.last_input = Some('d');
                 EventResult::Ignored
@@ -123,10 +175,14 @@ impl EditorView {
                     self.text[self.cursor_pos.y] += &line_copy;
                 }
 
-                self.cursor_pos.x = self.curr_line().len() - line_copy.len();
+                self.update_curr_line_graphemes();
+                self.cursor_pos.x = self.real_line_char_index(self.curr_line().len() - line_copy.len());
             }
             _ => {
-                self.text[self.cursor_pos.y].remove(self.cursor_pos.x - 1);
+                for _ in 0..self.line_char_size(self.cursor_pos.x - 1) {
+                    let index = self.next_line_char_index(self.cursor_pos.x - 1);
+                    self.text[self.cursor_pos.y].remove(index);
+                }
                 self.cursor_pos.x -= 1;
             }
         }
@@ -258,20 +314,6 @@ impl EditorView {
     }
 }
 
-// MARK: File management
-
-impl EditorView {
-    fn save(&self) -> bool {
-        let content = self.text.join("\n");
-        
-        if let Ok(_) = fs::write(&self.file_path, content) {
-            true
-        } else {
-            false
-        }
-    }
-}
-
 // MARK: Draw
 
 impl EditorView {
@@ -292,9 +334,12 @@ impl EditorView {
                         );
                     }
                     else {
+                        let selected_char_index = self.real_line_char_index(self.cursor_pos.x);
+                        let selected_char_size = self.line_char_size(self.cursor_pos.x);
+
                         printer.print(
                             (self.cursor_pos.x, self.cursor_pos.y - self.scroll_index),
-                            &line[self.cursor_pos.x..self.cursor_pos.x + 1],
+                            &line[selected_char_index..selected_char_index + selected_char_size],
                         );
                     }
 
@@ -351,17 +396,35 @@ impl View for EditorView {
                 EventResult::Consumed(None)
             },
             Event::Char(c) => {
-                if self.is_insert_mode_active {
+                self.clear_bottom_message();
+
+                let event_res = if self.is_insert_mode_active {
                     self.on_input_insert_mode(c)
                 } else {
                     self.on_input_normal_mode(c)
+                };
+
+                if let EventResult::Consumed(callback) = event_res {
+                    self.update_curr_line_graphemes();
+                    EventResult::Consumed(callback)
+                } else {
+                    EventResult::Ignored
                 }
             }
             Event::Key(k) => {
-                if self.is_insert_mode_active {
+                self.clear_bottom_message();
+
+                let event_res = if self.is_insert_mode_active {
                     self.on_key_insert_mode(k)
                 } else {
                     self.on_key_normal_mode(k)
+                };
+
+                if let EventResult::Consumed(callback) = event_res {
+                    self.update_curr_line_graphemes();
+                    EventResult::Consumed(callback)
+                } else {
+                    EventResult::Ignored
                 }
             }
             _ => EventResult::Ignored,

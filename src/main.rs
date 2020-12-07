@@ -5,6 +5,7 @@ use std::process::exit;
 use std::fs;
 use std::env;
 use std::rc::Rc;
+use cursive::Cursive;
 use cursive::views::{Dialog, TextView};
 use cursive::theme::{Color, ColorStyle, Theme, BaseColor};
 use crate::editor_view::EditorView;
@@ -36,6 +37,7 @@ fn main() {
 
 fn show_editor(file_path: String, file_content: String) {
     let mut siv = cursive::default();
+    siv.add_global_callback('x', quit);
 
     siv.add_fullscreen_layer(EditorView::new(file_path, String::from(file_content)));
     
@@ -51,4 +53,8 @@ fn show_editor(file_path: String, file_content: String) {
     siv.set_theme(theme);
 
     siv.run();
+}
+
+fn quit(siv: &mut Cursive) {
+    siv.quit();
 }
